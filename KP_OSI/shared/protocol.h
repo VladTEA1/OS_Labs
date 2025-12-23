@@ -3,11 +3,12 @@
 
 #include <stdbool.h>
 #include <time.h>
+#include <pthread.h>
 
 // Конфигурация
 #define SHM_NAME "/sea_battle_shm"
 #define MMAP_FILE "/tmp/sea_battle.mmap"
-#define MMAP_SIZE 65536  // 64KB
+#define MMAP_SIZE (65536 + 1024)  // 64KB + доп место для мьютекса
 
 #define MAX_PLAYERS 20
 #define MAX_GAMES 10
@@ -100,8 +101,9 @@ typedef struct {
     int game_count;
     
     // Мьютекс для синхронизации
-    int mutex;
+    pthread_mutex_t mutex;
+    pthread_mutexattr_t mutex_attr;
     int initialized;
 } SharedData;
 
-#endif // PROTOCOL_Hй
+#endif // PROTOCOL_H
