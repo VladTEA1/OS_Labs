@@ -8,6 +8,7 @@
 #include <time.h>
 #include <errno.h>
 #include <signal.h>
+#include <pthread.h>
 #include "../shared/protocol.h"
 
 SharedData* shared = NULL;
@@ -20,15 +21,21 @@ void handle_signal(int sig) {
     running = 0;
 }
 
-// Спинлок для синхронизации
+// Функции синхронизации с мьютексами
 void lock() {
-    while (__sync_lock_test_and_set(&shared->mutex, 1)) {
-        usleep(100);
+    int ret = pthread_mutex_lock(&shared->mutex);
+    if (ret != 0) {
+        fprintf(stderr, "Ошибка блокировки мьютекса: %s\n", strerror(ret));
+        exit(1);
     }
 }
 
 void unlock() {
-    __sync_lock_release(&shared->mutex);
+    int ret = pthread_mutex_unlock(&shared->mutex);
+    if (ret != 0) {
+        fprintf(stderr, "Ошибка разблокировки мьютекса: %s\n", strerror(ret));
+        exit(1);
+    }
 }
 
 // Инициализация shared memory
@@ -44,7 +51,7 @@ int init_shared_memory() {
         }
     }
     
-    // Устанавливаем размер
+    // Устанавливаем размер (увеличиваем для мьютекса)
     if (ftruncate(mmap_fd, MMAP_SIZE) < 0) {
         perror("ftruncate failed");
         close(mmap_fd);
@@ -64,17 +71,31 @@ int init_shared_memory() {
         memset(shared, 0, sizeof(SharedData));
         shared->player_count = 0;
         shared->game_count = 0;
-        shared->mutex = 0;
         shared->initialized = 12345;
-        printf("Initialized new shared memory\n");
+        
+        // Инициализация мьютекса с атрибутами для shared memory
+        pthread_mutexattr_init(&shared->mutex_attr);
+        pthread_mutexattr_setpshared(&shared->mutex_attr, PTHREAD_PROCESS_SHARED);
+        pthread_mutexattr_setrobust(&shared->mutex_attr, PTHREAD_MUTEX_ROBUST);
+        pthread_mutex_init(&shared->mutex, &shared->mutex_attr);
+        
+        printf("Initialized new shared memory with POSIX mutex\n");
     } else {
         printf("Using existing shared memory\n");
+        
+        // Восстанавливаем мьютекс если он в неконсистентном состоянии
+        int ret = pthread_mutex_consistent(&shared->mutex);
+        if (ret == EINVAL) {
+            // Мьютекс не требует восстановления
+        } else if (ret != 0) {
+            fprintf(stderr, "Warning: mutex recovery failed: %s\n", strerror(ret));
+        }
     }
     
     return 0;
 }
 
-// Поиск игрока по логину
+// Поиск игрока по логину (без изменений)
 int find_player(const char* login) {
     for (int i = 0; i < shared->player_count; i++) {
         if (strcmp(shared->players[i].login, login) == 0) {
@@ -84,7 +105,7 @@ int find_player(const char* login) {
     return -1;
 }
 
-// Добавление нового игрока
+// Добавление нового игрока (без изменений)
 int add_player(const char* login) {
     int idx = find_player(login);
     if (idx >= 0) {
@@ -113,7 +134,7 @@ int add_player(const char* login) {
     return shared->player_count - 1;
 }
 
-// Поиск игры по имени
+// Поиск игры по имени (без изменений)
 int find_game(const char* name) {
     for (int i = 0; i < shared->game_count; i++) {
         if (strcmp(shared->games[i].name, name) == 0) {
@@ -123,7 +144,7 @@ int find_game(const char* name) {
     return -1;
 }
 
-// Проверка возможности размещения корабля
+// Проверка возможности размещения корабля (без изменений)
 int can_place_ship(int board[BOARD_SIZE][BOARD_SIZE], int x, int y, int size, ShipDirection dir) {
     // Проверка границ
     if (dir == DIR_HORIZONTAL) {
@@ -160,7 +181,7 @@ int can_place_ship(int board[BOARD_SIZE][BOARD_SIZE], int x, int y, int size, Sh
     return 1;  // Можно разместить
 }
 
-// Размещение корабля на доске
+// Размещение корабля на доске (без изменений)
 void place_ship_on_board(int board[BOARD_SIZE][BOARD_SIZE], Ship* ship, 
                          int x, int y, int size, ShipDirection dir) {
     ship->size = size;
@@ -181,7 +202,7 @@ void place_ship_on_board(int board[BOARD_SIZE][BOARD_SIZE], Ship* ship,
     }
 }
 
-// Обработка выстрела
+// Обработка выстрела (без изменений)
 int process_shot(Game* game, int player_num, int x, int y) {
     // Определяем доску цели
     int (*target_board)[BOARD_SIZE];
@@ -246,7 +267,7 @@ int process_shot(Game* game, int player_num, int x, int y) {
     }
 }
 
-// Проверка окончания игры
+// Проверка окончания игры (без изменений)
 int check_game_over(Game* game) {
     // Проверяем все ли корабли первого игрока потоплены
     int all_sunk1 = 1;
@@ -281,7 +302,7 @@ int check_game_over(Game* game) {
     return 0;  // Игра продолжается
 }
 
-// Очистка неактивных игроков
+// Очистка неактивных игроков (без изменений)
 void cleanup_inactive_players() {
     time_t now = time(NULL);
     
@@ -292,7 +313,7 @@ void cleanup_inactive_players() {
     }
 }
 
-// Вывод статуса сервера
+// Вывод статуса сервера (без изменений)
 void print_server_status() {
     printf("\n=== Server Status ===\n");
     printf("Players: %d/%d (online: ", shared->player_count, MAX_PLAYERS);
@@ -333,10 +354,11 @@ void print_server_status() {
 
 // Основной цикл сервера
 void server_loop() {
-    printf("Server started successfully!\n");
-    printf("Shared memory: %s\n", SHM_NAME);
-    printf("MMAP file: %s\n", MMAP_FILE);
-    printf("Press Ctrl+C to stop\n");
+    // printf("Server started successfully!\n");
+    // printf("Shared memory: %s\n", SHM_NAME);
+    // printf("MMAP file: %s\n", MMAP_FILE);
+    // printf("Synchronization: POSIX mutex (process-shared)\n");
+    // printf("Press Ctrl+C to stop\n");
     
     int iteration = 0;
     
@@ -417,6 +439,10 @@ int main() {
     
     // Очистка при завершении
     printf("\nCleaning up...\n");
+    
+    // Уничтожаем мьютекс
+    pthread_mutex_destroy(&shared->mutex);
+    pthread_mutexattr_destroy(&shared->mutex_attr);
     
     if (shared) {
         munmap(shared, MMAP_SIZE);
