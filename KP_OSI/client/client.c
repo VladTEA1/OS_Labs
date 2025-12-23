@@ -7,6 +7,8 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <termios.h>
+#include <pthread.h>
+#include <errno.h>
 #include "../shared/protocol.h"
 
 SharedData* shared = NULL;
@@ -19,15 +21,21 @@ int my_player_num = 0;
 int ships_to_place[] = {4, 3, 3, 2, 2, 2, 1, 1, 1, 1};
 int current_ship_index = 0;
 
-// Функции синхронизации
+// Функции синхронизации с мьютексами
 void lock() {
-    while (__sync_lock_test_and_set(&shared->mutex, 1)) {
-        usleep(100);
+    int ret = pthread_mutex_lock(&shared->mutex);
+    if (ret != 0) {
+        fprintf(stderr, "Ошибка блокировки мьютекса: %s\n", strerror(ret));
+        exit(1);
     }
 }
 
 void unlock() {
-    __sync_lock_release(&shared->mutex);
+    int ret = pthread_mutex_unlock(&shared->mutex);
+    if (ret != 0) {
+        fprintf(stderr, "Ошибка разблокировки мьютекса: %s\n", strerror(ret));
+        exit(1);
+    }
 }
 
 // Подключение к shared memory
@@ -52,10 +60,18 @@ int connect_to_server() {
         return -1;
     }
     
+    // Проверяем, инициализирована ли shared memory
+    if (shared->initialized != 12345) {
+        printf("Shared memory not properly initialized by server\n");
+        munmap(shared, MMAP_SIZE);
+        close(mmap_fd);
+        return -1;
+    }
+    
     return 0;
 }
 
-// Отображение игрового поля
+// Отображение игрового поля (без изменений, как в оригинале)
 void print_board(int board[BOARD_SIZE][BOARD_SIZE], int show_ships) {
     printf("   ");
     for (int i = 0; i < BOARD_SIZE; i++) {
@@ -90,7 +106,7 @@ void print_board(int board[BOARD_SIZE][BOARD_SIZE], int show_ships) {
     }
 }
 
-// Проверка возможности размещения корабля
+// Проверка возможности размещения корабля (без изменений)
 int can_place_ship_here(int board[BOARD_SIZE][BOARD_SIZE], int x, int y, int size, ShipDirection dir) {
     // Проверка границ
     if (dir == DIR_HORIZONTAL) {
@@ -276,10 +292,18 @@ void join_game() {
         return;
     }
     
+    unlock();
+    
     printf("\nEnter game ID to join: ");
     int game_id;
-    scanf("%d", &game_id);
+    if (scanf("%d", &game_id) != 1) {
+        printf("Invalid input\n");
+        while (getchar() != '\n');
+        return;
+    }
     getchar();  // Убираем символ новой строки
+    
+    lock();
     
     if (game_id < 0 || game_id >= shared->game_count) {
         printf("Invalid game ID\n");
@@ -673,7 +697,7 @@ void show_stats() {
     unlock();
 }
 
-// Главное меню
+// Главное меню (без изменений, как в оригинале)
 void main_menu() {
     int choice;
     
@@ -815,7 +839,8 @@ void main_menu() {
 // Основная функция клиента
 int main() {
     printf("=== Sea Battle Client ===\n");
-    printf("Using MMAP for communication with server\n\n");
+    printf("Using MMAP for communication with server\n");
+    printf("Synchronization: POSIX mutexes\n\n");
     
     // Логин
     if (login_player() != 0) {
